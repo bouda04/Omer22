@@ -8,9 +8,6 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
-import android.os.Build;
-
-
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ImageButton;
@@ -27,6 +24,7 @@ public class Player extends Activity implements View.OnClickListener {
 
     private ImageButton ibPlay,ibNxt,ibPv;
     private int pos;
+    private int totalDuration;
     private Uri uri;
     private Sensor gyroscopeSensor;
     private SensorEventListener gyroscopeEventListner;
@@ -34,6 +32,8 @@ public class Player extends Activity implements View.OnClickListener {
     private Thread updateSeekBar;
     private TextView tv;
     private SeekBar SeekBar;
+    private Object mPauseLock;
+    boolean mpPlaying = false;
 
 
     @Override
@@ -48,39 +48,26 @@ public class Player extends Activity implements View.OnClickListener {
         ibPlay.setOnClickListener(this);
         ibNxt.setOnClickListener(this);
         ibPv.setOnClickListener(this);
-
+        pos=0;
+        mPauseLock = new Object();
         sensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         gyroscopeSensor= sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
 
        updateSeekBar=new Thread(){
             @Override
             public void run() {
-                int totalDuration=mp.getDuration();
-                SeekBar.setMax(totalDuration);
-                while (mp.getCurrentPosition()<=totalDuration) try {
-                    sleep(500);
-                    SeekBar.setProgress(mp.getCurrentPosition());
-                    if(mp.getCurrentPosition()==totalDuration){
-                        mp.stop();
-                        mp.release();
-                        pos=(pos+1)%mysongs.size();
-                        uri= Uri.parse(mysongs.get(pos).toString());
-                        //mp=MediaPlayer.create(getApplicationContext(),uri);
-
-                       // mp.start();
-                        try {
-                            mp.setDataSource(getApplicationContext(),uri);
-                            mp.prepareAsync();
-                        } catch (IOException e) {
-                            e.printStackTrace();
+                try{
+                        while (true){
+                            synchronized (mPauseLock){
+                                while (!mpPlaying)
+                                        mPauseLock.wait();
+                            }
+                            SeekBar.setProgress(mp.getCurrentPosition());
                         }
-                        SeekBar.setMax(mp.getDuration());
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
                     }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
                 }
-
-            }
         };
         SeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -112,21 +99,17 @@ public class Player extends Activity implements View.OnClickListener {
                 //if the phone moved on the axis y the player next the current song
                 if (sensorEvent.values[1] > 8f) {
                     mp.stop();
-                    mp.release();
+ //                   mp.release();
                     pos=(pos+1)%mysongs.size();
                     uri= Uri.parse(mysongs.get(pos).toString());
-                    mp=MediaPlayer.create(getApplicationContext(),uri);
-                    mp.start();
-                   SeekBar.setMax(mp.getDuration());
+                    changeSong(uri);
                 }
                 else if(sensorEvent.values[1]< -8f){
                     mp.stop();
-                    mp.release();
+ //                   mp.release();
                     pos=(pos+1)%mysongs.size();
                     uri= Uri.parse(mysongs.get(pos).toString());
-                    mp=MediaPlayer.create(getApplicationContext(),uri);
-                    mp.start();
-                    SeekBar.setMax(mp.getDuration());
+                    changeSong(uri);
                 }
 
             }
@@ -158,17 +141,47 @@ public class Player extends Activity implements View.OnClickListener {
         //mp=MediaPlayer.create(getApplicationContext(),uri);
 
 //        mp.start();
-        SeekBar.setMax(mp.getDuration());
+ //       SeekBar.setMax(mp.getDuration());
         updateSeekBar.start();
 
         //mp3 will be started after completion of preparing...
         mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
             @Override
             public void onPrepared(MediaPlayer player) {
+
                 player.start();
+                totalDuration=player.getDuration();
+                SeekBar.setMax(totalDuration);
+                synchronized (mPauseLock){
+                    mpPlaying = true;
+                    mPauseLock.notifyAll();
+                }
+
             }
         });
 
+        mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+            @Override
+            public void onCompletion(MediaPlayer mediaPlayer) {
+
+                pos=(pos+1)%mysongs.size();
+                Uri uri= Uri.parse(mysongs.get(pos).toString());
+                changeSong(uri);
+            }
+        });
+    }
+
+    private void changeSong(Uri uri){
+        try {
+            synchronized (mPauseLock){
+                mpPlaying = false;
+            }
+            mp.reset();
+            mp.setDataSource(getApplicationContext(),uri);
+            mp.prepareAsync();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
    // @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     @Override
@@ -189,17 +202,15 @@ public class Player extends Activity implements View.OnClickListener {
 
             case R.id.next:
                 mp.stop();
-                mp.release();
+ //               mp.release();
                 pos=(pos+1)%mysongs.size();
                 uri= Uri.parse(mysongs.get(pos).toString());
-                mp=MediaPlayer.create(getApplicationContext(),uri);
-                mp.start();
-                SeekBar.setMax(mp.getDuration());
+                changeSong(uri);
             break;
 
             case R.id.previous:
                 mp.stop();
-                mp.release();
+ //               mp.release();
                 if(pos-1<0){
                     pos=mysongs.size()-1;
                 }
@@ -207,9 +218,10 @@ public class Player extends Activity implements View.OnClickListener {
                     pos=pos-1;
                 }
                 uri= Uri.parse(mysongs.get(pos).toString());
-                mp=MediaPlayer.create(getApplicationContext(),uri);
-                mp.start();
-                SeekBar.setMax(mp.getDuration());
+                changeSong(uri);
+               // mp=MediaPlayer.create(getApplicationContext(),uri);
+              //  mp.start();
+               // SeekBar.setMax(mp.getDuration());
             break;
         }
 
